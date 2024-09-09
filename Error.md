@@ -127,3 +127,151 @@ where
 - **Custom Error Types**: Define custom error types and use pattern matching to handle different error scenarios more gracefully.
 
 By intercepting errors in middleware, you can ensure that error responses are handled uniformly across your application.
+___________
+To store the error in the database from within the `IntoResponse` function, you can modify the approach slightly. Since `IntoResponse` is stateless, you can't directly access shared application state (like a database connection) from within the enum's `IntoResponse` implementation. However, you can pass any necessary state (like a database connection) to the handler, and log or store the error in the database when handling the error before converting it to a response.
+
+Here’s how you can modify the example to store the error in the database within the `IntoResponse` process:
+
+### Step-by-Step Approach:
+
+1. **Modify `AppState` to Include a Database Pool**:
+   You can use an `sqlx::PgPool` (or another database connection pool, like `diesel`) in your `AppState` to handle database connections.
+
+2. **Update the Error Enum**:
+   Ensure that the `IntoResponse` implementation logs or stores the error using the database pool passed from the handler.
+
+3. **Error Handling Logic in the Handler**:
+   The handler will pass the state (which includes the database pool) and the error to the error-handling logic, where the error can be stored in the database.
+
+### Example with SQLx:
+
+```rust
+use axum::{
+    extract::State,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
+use serde_json::json;
+use sqlx::{PgPool, query};
+use std::{sync::Arc, fmt::Debug};
+
+// Define your app state to include the database pool
+#[derive(Debug, Clone)]
+pub struct AppState {
+    pub db_pool: PgPool,
+    pub config_value: String,
+}
+
+// Error enum with different kinds of errors
+#[derive(Debug)]
+pub enum MyError {
+    NotFound,
+    InternalError(String), // You can include details in the error
+}
+
+// Implement IntoResponse for MyError
+impl IntoResponse for MyError {
+    fn into_response(self) -> Response {
+        match self {
+            MyError::NotFound => (StatusCode::NOT_FOUND, "Not found").into_response(),
+            MyError::InternalError(_) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error").into_response()
+            }
+        }
+    }
+}
+
+// Helper function to log/store the error in the database
+async fn store_error_in_db(pool: &PgPool, error: &MyError) {
+    let error_message = match error {
+        MyError::NotFound => "NotFound".to_string(),
+        MyError::InternalError(msg) => msg.clone(),
+    };
+
+    if let Err(e) = query!(
+        "INSERT INTO error_logs (error_message) VALUES ($1)",
+        error_message
+    )
+    .execute(pool)
+    .await
+    {
+        eprintln!("Failed to log error in the database: {}", e);
+    }
+}
+
+// A handler where an error might occur
+async fn my_handler(State(state): State<Arc<AppState>>) -> Result<(), MyError> {
+    // Simulate an internal error
+    Err(MyError::InternalError("Database connection failed".into()))
+}
+
+// Error handler that logs the error and returns the response
+async fn error_handler(
+    State(state): State<Arc<AppState>>,
+    result: Result<(), MyError>,
+) -> impl IntoResponse {
+    match result {
+        Ok(_) => StatusCode::OK.into_response(),
+        Err(err) => {
+            // Store the error in the database asynchronously
+            store_error_in_db(&state.db_pool, &err).await;
+
+            // Return the response based on the error
+            err.into_response()
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    // Initialize the database connection pool
+    let db_pool = PgPool::connect("postgres://user:password@localhost/mydb").await.unwrap();
+
+    // Create shared state with the database pool
+    let shared_state = Arc::new(AppState {
+        db_pool,
+        config_value: "Important config".to_string(),
+    });
+
+    // Set up your application routes and state
+    let app = axum::Router::new()
+        .route("/", axum::routing::get(my_handler))
+        .layer(axum::middleware::from_fn(error_handler))
+        .with_state(shared_state);
+
+    // Start the server
+    axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
+}
+```
+
+### Key Points:
+
+1. **AppState Contains Database Pool**:
+   `AppState` holds the `PgPool`, which is used for database operations.
+
+2. **`store_error_in_db` Function**:
+   This asynchronous function logs the error into the `error_logs` table in the database. It extracts relevant error information from `MyError` and inserts it into the database.
+
+3. **Handler and Error Flow**:
+   The `my_handler` simulates an error (like a failed database connection). When an error occurs, it’s passed to `error_handler`, which logs it to the database and returns an appropriate HTTP response.
+
+4. **Error Handling in `IntoResponse`**:
+   The `IntoResponse` implementation is still simple and stateless. However, the database logging is done in the handler (where you have access to the state).
+
+### SQL for Creating the `error_logs` Table:
+```sql
+CREATE TABLE error_logs (
+    id SERIAL PRIMARY KEY,
+    error_message TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### Benefits of This Approach:
+- **Separation of Concerns**: The error logging logic is separated from the actual response conversion, which keeps the code clean.
+- **Error Tracking**: You get persistent error logs in your database, which can help with debugging and monitoring production systems.
+- 
