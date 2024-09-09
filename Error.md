@@ -275,3 +275,250 @@ CREATE TABLE error_logs (
 - **Separation of Concerns**: The error logging logic is separated from the actual response conversion, which keeps the code clean.
 - **Error Tracking**: You get persistent error logs in your database, which can help with debugging and monitoring production systems.
 - 
+
+
+
+
+_______________
+
+In `Axum`, there are alternative ways to handle logging or storing errors in the database, while keeping the architecture clean and minimizing coupling between error handling and response creation. Below are some approaches to store errors in the database without directly embedding this logic inside the `IntoResponse` implementation:
+
+### Alternative Approaches for Handling Errors in Axum:
+
+#### 1. **Using a Custom Extractor for Error Logging**
+
+You can create a **custom extractor** to inject the database pool (or other application state) into the error handling process, logging or storing the error before generating the response.
+
+Here's how you could use this approach:
+
+- You define a custom extractor that handles errors and logs them into the database, then converts them into responses.
+- The logging occurs outside of the `IntoResponse` implementation.
+
+##### Example: Custom Extractor for Error Logging
+
+```rust
+use axum::{
+    extract::{FromRequest, State},
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
+use serde_json::json;
+use sqlx::{PgPool, query};
+use std::{sync::Arc, future::Future, pin::Pin};
+
+// App state containing a database pool
+#[derive(Clone)]
+pub struct AppState {
+    pub db_pool: PgPool,
+}
+
+// Error enum
+#[derive(Debug)]
+pub enum MyError {
+    NotFound,
+    InternalError(String),
+}
+
+// Custom extractor for handling and logging errors
+pub struct LogError<T>(pub Result<T, MyError>);
+
+// Implement FromRequest to handle the logging when an error occurs
+#[axum::async_trait]
+impl<S, T> FromRequest<S> for LogError<T>
+where
+    S: Send + Sync,
+    T: Send + 'static,
+{
+    type Rejection = Response;
+
+    async fn from_request(
+        req: axum::http::Request<S>,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let pool = state
+            .extensions()
+            .get::<Arc<AppState>>()
+            .expect("AppState should be in request extensions")
+            .db_pool
+            .clone();
+
+        // Try to extract a Result<T, MyError>
+        match Result::<T, MyError>::from_request(req, state).await {
+            Ok(value) => Ok(LogError(Ok(value))),
+            Err(err) => {
+                // Log the error into the database
+                store_error_in_db(&pool, &err).await;
+                Err(err.into_response())
+            }
+        }
+    }
+}
+
+// Async function to log errors into the database
+async fn store_error_in_db(pool: &PgPool, error: &MyError) {
+    let error_message = match error {
+        MyError::NotFound => "NotFound".to_string(),
+        MyError::InternalError(msg) => msg.clone(),
+    };
+
+    if let Err(e) = query!(
+        "INSERT INTO error_logs (error_message) VALUES ($1)",
+        error_message
+    )
+    .execute(pool)
+    .await
+    {
+        eprintln!("Failed to log error in the database: {}", e);
+    }
+}
+
+// IntoResponse for the error types
+impl IntoResponse for MyError {
+    fn into_response(self) -> Response {
+        match self {
+            MyError::NotFound => (StatusCode::NOT_FOUND, "Not found").into_response(),
+            MyError::InternalError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error").into_response(),
+        }
+    }
+}
+
+// Example handler that produces an error
+async fn my_handler() -> Result<(), MyError> {
+    Err(MyError::InternalError("Simulated internal error".into()))
+}
+
+#[tokio::main]
+async fn main() {
+    let db_pool = PgPool::connect("postgres://user:password@localhost/mydb").await.unwrap();
+    let shared_state = Arc::new(AppState { db_pool });
+
+    let app = axum::Router::new()
+        .route("/", axum::routing::get(my_handler))
+        .with_state(shared_state);
+
+    axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
+}
+```
+
+### Explanation:
+- **Custom Extractor (`LogError`)**: The custom extractor is responsible for logging the error into the database. When a handler returns an error, it uses this extractor to automatically store the error before converting it into an HTTP response.
+- **`FromRequest` Trait**: This trait allows you to intercept requests and extract or inject necessary state (like `AppState`), enabling you to handle the error logging or response customization outside the handler itself.
+
+This approach keeps the error logging separate from the business logic while still allowing you to log errors when needed.
+
+#### 2. **Using a Global Error Layer for Error Logging**
+
+In this approach, we create a global **error middleware layer** (also called a fallback layer or recovery layer) that intercepts all errors, logs them to the database, and converts them into appropriate HTTP responses. This is useful when you want centralized error handling.
+
+##### Example: Global Error Layer
+
+```rust
+use axum::{
+    http::StatusCode,
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
+    routing::get,
+    Router, Json, extract::State,
+};
+use serde_json::json;
+use sqlx::PgPool;
+use std::sync::Arc;
+
+// Define the AppState to include the database pool
+#[derive(Clone)]
+pub struct AppState {
+    pub db_pool: PgPool,
+}
+
+// Error enum
+#[derive(Debug)]
+pub enum MyError {
+    NotFound,
+    InternalError(String),
+}
+
+// Implement IntoResponse for MyError
+impl IntoResponse for MyError {
+    fn into_response(self) -> Response {
+        match self {
+            MyError::NotFound => (StatusCode::NOT_FOUND, "Not found").into_response(),
+            MyError::InternalError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error").into_response(),
+        }
+    }
+}
+
+// Async function to log the error into the database
+async fn log_error_in_db(pool: &PgPool, error: &MyError) {
+    let error_message = match error {
+        MyError::NotFound => "NotFound".to_string(),
+        MyError::InternalError(msg) => msg.clone(),
+    };
+
+    if let Err(e) = sqlx::query!(
+        "INSERT INTO error_logs (error_message) VALUES ($1)",
+        error_message
+    )
+    .execute(pool)
+    .await
+    {
+        eprintln!("Failed to log error in the database: {}", e);
+    }
+}
+
+// Global error handler middleware
+async fn global_error_handler<B>(
+    State(state): State<Arc<AppState>>,
+    request: axum::http::Request<B>,
+    next: Next<B>,
+) -> Result<Response, Response> {
+    let response = next.run(request).await;
+
+    if response.status().is_client_error() || response.status().is_server_error() {
+        let error = MyError::InternalError("Global error handling".into());
+
+        // Log error to the database
+        log_error_in_db(&state.db_pool, &error).await;
+
+        // Return the error response
+        return Err(error.into_response());
+    }
+
+    Ok(response)
+}
+
+// Example handler that simulates an error
+async fn handler_with_error() -> Result<(), MyError> {
+    Err(MyError::InternalError("Simulated handler error".into()))
+}
+
+#[tokio::main]
+async fn main() {
+    let db_pool = PgPool::connect("postgres://user:password@localhost/mydb").await.unwrap();
+    let shared_state = Arc::new(AppState { db_pool });
+
+    let app = Router::new()
+        .route("/", get(handler_with_error))
+        .layer(middleware::from_fn(global_error_handler))
+        .with_state(shared_state);
+
+    axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
+}
+```
+
+### Explanation:
+- **Global Middleware**: The `global_error_handler` middleware layer catches errors and logs them before generating the response. The middleware has access to `AppState`, so it can log errors to the database.
+- **Centralized Error Handling**: This keeps the error handling logic centralized, making it easier to maintain and manage logging or other side effects (like notifying external services).
+
+### Summary:
+
+- **Custom Extractor Approach**: This method uses a custom extractor to log errors into the database when they occur, while keeping the logic out of the `IntoResponse` trait.
+- **Global Error Layer**: A centralized middleware for handling all errors, logging them, and then responding appropriately. This decouples error handling from individual routes.
+
+These approaches offer more flexibility and separation of concerns, allowing you to handle errors, log them into the database, and keep the response generation process separate.
