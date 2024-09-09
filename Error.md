@@ -522,3 +522,143 @@ async fn main() {
 - **Global Error Layer**: A centralized middleware for handling all errors, logging them, and then responding appropriately. This decouples error handling from individual routes.
 
 These approaches offer more flexibility and separation of concerns, allowing you to handle errors, log them into the database, and keep the response generation process separate.
+__________
+To capture and handle your custom error (`MyError`) in the `global_error_handler` function, you'll need to propagate the error up from your handlers to the middleware. This means you'll modify your handler to return the error as part of the `Result`, and then in the `global_error_handler`, you'll inspect that error and handle it accordingly.
+
+You can do this by defining your own custom error type and using a middleware layer to intercept and process the error. Here’s how you can achieve that:
+
+### Steps:
+
+1. **Ensure your handlers return `Result<T, MyError>`**: The handler should return `Result` where the error is your custom error type (`MyError`).
+   
+2. **Use `Result<Response, MyError>` in the handler**: The handler can return a custom error directly, which will be caught in the middleware.
+
+3. **Inspect the error in the middleware**: Modify the `global_error_handler` to inspect the result, and if it’s an error, capture and handle the `MyError` by logging it into the database and then generating the appropriate response.
+
+### Full Example:
+
+```rust
+use axum::{
+    http::StatusCode,
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
+    routing::get,
+    Json, extract::State,
+};
+use serde_json::json;
+use sqlx::PgPool;
+use std::sync::Arc;
+
+// Define the AppState to include the database pool
+#[derive(Clone)]
+pub struct AppState {
+    pub db_pool: PgPool,
+}
+
+// Error enum
+#[derive(Debug)]
+pub enum MyError {
+    NotFound,
+    InternalError(String),
+}
+
+// Implement IntoResponse for MyError
+impl IntoResponse for MyError {
+    fn into_response(self) -> Response {
+        match self {
+            MyError::NotFound => (StatusCode::NOT_FOUND, "Not found").into_response(),
+            MyError::InternalError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error").into_response(),
+        }
+    }
+}
+
+// Async function to log the error into the database
+async fn log_error_in_db(pool: &PgPool, error: &MyError) {
+    let error_message = match error {
+        MyError::NotFound => "NotFound".to_string(),
+        MyError::InternalError(msg) => msg.clone(),
+    };
+
+    if let Err(e) = sqlx::query!(
+        "INSERT INTO error_logs (error_message) VALUES ($1)",
+        error_message
+    )
+    .execute(pool)
+    .await
+    {
+        eprintln!("Failed to log error in the database: {}", e);
+    }
+}
+
+// Global error handler middleware
+async fn global_error_handler<B>(
+    State(state): State<Arc<AppState>>,
+    request: axum::http::Request<B>,
+    next: Next<B>,
+) -> Result<Response, Response> {
+    // Run the next handler in the chain
+    match next.run(request).await.into_result() {
+        Ok(response) => Ok(response),
+        Err(err) => {
+            // If it's our custom error, log it and respond
+            if let Some(my_error) = err.downcast_ref::<MyError>() {
+                log_error_in_db(&state.db_pool, my_error).await;
+                return Err(my_error.clone().into_response());
+            }
+
+            // If it's not our custom error, handle it as a generic 500 error
+            Err((StatusCode::INTERNAL_SERVER_ERROR, "Unhandled error").into_response())
+        }
+    }
+}
+
+// Example handler that produces an error
+async fn handler_with_error() -> Result<(), MyError> {
+    // Simulate a custom error
+    Err(MyError::InternalError("Simulated internal error".into()))
+}
+
+#[tokio::main]
+async fn main() {
+    // Initialize the database connection pool
+    let db_pool = PgPool::connect("postgres://user:password@localhost/mydb").await.unwrap();
+    
+    // Create shared state with the database pool
+    let shared_state = Arc::new(AppState { db_pool });
+
+    // Set up the router with the global error handler middleware
+    let app = axum::Router::new()
+        .route("/", get(handler_with_error))
+        .layer(middleware::from_fn(global_error_handler)) // Apply the error handler middleware
+        .with_state(shared_state);
+
+    // Start the server
+    axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
+}
+```
+
+### Breakdown:
+
+1. **Handler Returning `MyError`**:
+   - In `handler_with_error`, the function returns a `Result<(), MyError>`. It simulates an internal error by returning `Err(MyError::InternalError("..."))`.
+   
+2. **Global Error Handler**:
+   - The `global_error_handler` middleware wraps all requests and processes the errors. It uses `next.run(request).await.into_result()` to run the next handler and check whether the result was an `Ok` or an `Err`.
+   - If an error occurs, it checks if the error can be downcast to a `MyError`. If it can, the error is logged to the database and then converted to a proper HTTP response via the `IntoResponse` trait.
+   - If it’s not a `MyError`, it’s treated as a generic server error.
+
+3. **Database Logging**:
+   - The `log_error_in_db` function logs the error message into the database asynchronously, using the database pool from the application state (`AppState`).
+
+4. **Using `downcast_ref` to Capture Custom Errors**:
+   - `downcast_ref::<MyError>()` is used to check whether the error is of type `MyError`. This allows the middleware to specifically handle and log only those errors.
+   
+### Benefits of this Approach:
+- **Centralized Error Handling**: All errors are funneled through the global error handler, which can log them, transform them, and respond appropriately.
+- **Custom Error Handling**: By downcasting to your custom `MyError` type, you can log custom error messages and generate appropriate responses specific to your application's error types.
+- **Database Logging**: The error logging happens in the middleware layer, ensuring that error tracking and response generation are cleanly separated.
+
+This pattern allows you to handle errors in a centralized and flexible manner, with the ability to distinguish between different types of errors and act accordingly.
