@@ -1,0 +1,131 @@
+Here’s a full example demonstrating how to implement Skytable connection pooling and basic CRUD functionality in a Rust project. We’ll use the `skytable` crate along with the `bb8` crate for connection pooling.
+
+First, ensure you have these dependencies in your `Cargo.toml`:
+
+```toml
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+bb8 = "0.8"
+skytable = "0.5"
+```
+
+### Example Code:
+
+```rust
+use bb8::{Pool, PooledConnection};
+use bb8::ManageConnection;
+use skytable::actions::{Get, Set, Del};
+use skytable::PoolableConn;
+use skytable::resp::RespCode;
+use tokio::time::{sleep, Duration};
+use std::time::Instant;
+use skytable::Connection;
+
+// Skytable connection manager to be used with the connection pool
+struct SkytableConnectionManager;
+
+#[async_trait::async_trait]
+impl ManageConnection for SkytableConnectionManager {
+    type Connection = PoolableConn;
+    type Error = skytable::SkyhashError;
+
+    async fn connect(&self) -> Result<Self::Connection, Self::Error> {
+        PoolableConn::new("127.0.0.1", 2003).await // Default Skytable address and port
+    }
+
+    async fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
+        conn.ping().await // Validate by sending a PING
+    }
+
+    fn has_broken(&self, _conn: &mut Self::Connection) -> bool {
+        false // Indicate the connection is valid
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create a connection pool
+    let manager = SkytableConnectionManager;
+    let pool = Pool::builder().build(manager).await?;
+
+    // Example CRUD operations
+    // 1. Create (Set a value)
+    set_key(&pool, "mykey", "myvalue").await?;
+
+    // 2. Read (Get a value)
+    let value = get_key(&pool, "mykey").await?;
+    println!("Got value: {:?}", value);
+
+    // 3. Update (Set a new value for an existing key)
+    set_key(&pool, "mykey", "newvalue").await?;
+    let updated_value = get_key(&pool, "mykey").await?;
+    println!("Updated value: {:?}", updated_value);
+
+    // 4. Delete (Delete a key)
+    delete_key(&pool, "mykey").await?;
+
+    // Verify the key is deleted
+    let deleted_value = get_key(&pool, "mykey").await?;
+    println!("Value after deletion: {:?}", deleted_value);
+
+    Ok(())
+}
+
+// Function to set a key-value pair in Skytable
+async fn set_key(pool: &Pool<SkytableConnectionManager>, key: &str, value: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut conn = pool.get().await?;
+    let response: RespCode = conn.set(key, value).await?;
+    if response.is_ok() {
+        println!("Set key '{}' to '{}'", key, value);
+    } else {
+        println!("Failed to set key");
+    }
+    Ok(())
+}
+
+// Function to get a value from Skytable
+async fn get_key(pool: &Pool<SkytableConnectionManager>, key: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let mut conn = pool.get().await?;
+    let response: Option<String> = conn.get(key).await?;
+    Ok(response)
+}
+
+// Function to delete a key from Skytable
+async fn delete_key(pool: &Pool<SkytableConnectionManager>, key: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut conn = pool.get().await?;
+    let response: RespCode = conn.del(key).await?;
+    if response.is_ok() {
+        println!("Deleted key '{}'", key);
+    } else {
+        println!("Failed to delete key");
+    }
+    Ok(())
+}
+```
+
+### Explanation:
+
+1. **Connection Pooling**: We use the `bb8` crate for managing a pool of connections to Skytable. `SkytableConnectionManager` is responsible for creating new connections and ensuring their validity.
+   
+2. **CRUD Operations**:
+   - **Create**: The `set_key` function sets a key-value pair in the Skytable database.
+   - **Read**: The `get_key` function fetches a value for a given key.
+   - **Update**: In this example, updating is done simply by calling `set_key` with a new value.
+   - **Delete**: The `delete_key` function removes a key from the database.
+
+3. **Connection Management**: The connection pool automatically provides a pooled connection whenever needed, reducing the overhead of creating new connections for each operation.
+
+### Running the Example:
+To run the code, make sure you have a running Skytable instance on `127.0.0.1:2003`. You can start Skytable by running:
+
+```bash
+skytable
+```
+
+Then, you can run the Rust code using:
+
+```bash
+cargo run
+```
+
+This will demonstrate setting, getting, updating, and deleting a key in Skytable.
