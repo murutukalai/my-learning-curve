@@ -129,3 +129,159 @@ cargo run
 ```
 
 This will demonstrate setting, getting, updating, and deleting a key in Skytable.
+
+
+-----------
+
+To use `bb8-skytable`, we need to refactor the code to utilize the connection pooling provided by this crate. The `bb8-skytable` crate simplifies using the Skytable database with connection pooling.
+
+### Steps:
+1. Replace the custom connection manager with the `bb8-skytable` crate’s connection pooling.
+2. Refactor the CRUD functions to work with the `bb8-skytable` connection pool.
+
+### Add `bb8-skytable` to `Cargo.toml`:
+
+```toml
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+bb8 = "0.8"
+bb8-skytable = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+```
+
+### Full Example Code using `bb8-skytable`:
+
+```rust
+use bb8::Pool;
+use bb8_skytable::SkytableConnectionManager;
+use skytable::actions::{Get, Set, Del};
+use skytable::resp::RespCode;
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Debug)]
+struct User {
+    id: u64,
+    username: String,
+    email: String,
+    age: u8,
+    active: bool,
+    height: f32,
+    scores: Vec<i32>,
+    metadata: Option<String>,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create a Skytable connection pool using bb8-skytable
+    let manager = SkytableConnectionManager::new("127.0.0.1", 2003);
+    let pool = Pool::builder().build(manager).await?;
+
+    // Example user
+    let user = User {
+        id: 1,
+        username: "johndoe".to_string(),
+        email: "john@example.com".to_string(),
+        age: 30,
+        active: true,
+        height: 5.9,
+        scores: vec![85, 90, 95],
+        metadata: Some("Extra data".to_string()),
+    };
+
+    // Perform CRUD operations
+    // Create (Insert user)
+    insert_user(&pool, &user).await?;
+
+    // Read (Get user by ID)
+    let fetched_user = get_user(&pool, 1).await?;
+    println!("Fetched user: {:?}", fetched_user);
+
+    // Update (Modify user)
+    let mut updated_user = fetched_user.unwrap();
+    updated_user.username = "johnnydoe".to_string();
+    update_user(&pool, &updated_user).await?;
+
+    // Delete (Remove user)
+    delete_user(&pool, 1).await?;
+
+    Ok(())
+}
+
+// Insert a user into Skytable
+async fn insert_user(pool: &Pool<SkytableConnectionManager>, user: &User) -> Result<(), Box<dyn std::error::Error>> {
+    let mut conn = pool.get().await?;
+    let user_data = serde_json::to_string(&user)?;
+    let key = format!("user:{}", user.id);
+    let response: RespCode = conn.set(&key, &user_data).await?;
+    if response.is_ok() {
+        println!("Inserted user with ID {}", user.id);
+    } else {
+        println!("Failed to insert user");
+    }
+    Ok(())
+}
+
+// Get a user from Skytable by ID
+async fn get_user(pool: &Pool<SkytableConnectionManager>, user_id: u64) -> Result<Option<User>, Box<dyn std::error::Error>> {
+    let mut conn = pool.get().await?;
+    let key = format!("user:{}", user_id);
+    if let Some(user_data): Option<String> = conn.get(&key).await? {
+        let user: User = serde_json::from_str(&user_data)?;
+        Ok(Some(user))
+    } else {
+        Ok(None)
+    }
+}
+
+// Update a user in Skytable
+async fn update_user(pool: &Pool<SkytableConnectionManager>, user: &User) -> Result<(), Box<dyn std::error::Error>> {
+    let mut conn = pool.get().await?;
+    let user_data = serde_json::to_string(&user)?;
+    let key = format!("user:{}", user.id);
+    let response: RespCode = conn.set(&key, &user_data).await?;
+    if response.is_ok() {
+        println!("Updated user with ID {}", user.id);
+    } else {
+        println!("Failed to update user");
+    }
+    Ok(())
+}
+
+// Delete a user from Skytable
+async fn delete_user(pool: &Pool<SkytableConnectionManager>, user_id: u64) -> Result<(), Box<dyn std::error::Error>> {
+    let mut conn = pool.get().await?;
+    let key = format!("user:{}", user_id);
+    let response: RespCode = conn.del(&key).await?;
+    if response.is_ok() {
+        println!("Deleted user with ID {}", user_id);
+    } else {
+        println!("Failed to delete user");
+    }
+    Ok(())
+}
+```
+
+### Explanation:
+
+1. **`bb8-skytable` Pool**: The `bb8-skytable` crate provides a connection pool specifically for Skytable. The `SkytableConnectionManager` handles the creation and management of the connections to Skytable, and we create a connection pool using `Pool::builder().build(manager).await?`.
+
+2. **CRUD Operations**:
+   - **Insert User**: Serializes the `User` struct into a JSON string and stores it in Skytable with the key `user:<id>`.
+   - **Get User**: Fetches the value from Skytable by the key (`user:<id>`), deserializes it into a `User` struct.
+   - **Update User**: Same as insert, but overwrites the existing key.
+   - **Delete User**: Deletes the key for the user in Skytable.
+
+3. **Connection Pool**: When performing any operation, we use `pool.get().await?` to obtain a connection from the pool.
+
+### Running the Example:
+
+Ensure that Skytable is running on `127.0.0.1:2003`. Then, run the Rust program:
+
+```bash
+cargo run
+```
+
+This will insert a user, fetch the user, update the user, and finally delete the user from Skytable.
+
+By using `bb8-skytable`, we can handle multiple Skytable connections efficiently, improving performance in high-concurrency scenarios.
