@@ -285,3 +285,120 @@ cargo run
 This will insert a user, fetch the user, update the user, and finally delete the user from Skytable.
 
 By using `bb8-skytable`, we can handle multiple Skytable connections efficiently, improving performance in high-concurrency scenarios.
+
+
+
+____________
+Skytable primarily operates as a NoSQL key-value store, which means its queries are mostly centered around key-value operations rather than SQL-like queries that you might see in relational databases. However, you can still perform operations that simulate "queries" by organizing your data and using Skytable's supported commands such as `GET`, `SET`, `DEL`, `SCAN`, etc.
+
+If by "normal query" you mean executing commands directly without the CRUD-style abstraction we have been using (such as executing direct `GET`, `SET`, etc. without the structured function wrappers), here’s how you can directly interact with Skytable using raw queries in `bb8-skytable`.
+
+### Example of Using Raw Queries
+
+You can directly send Skytable queries using the `execute_raw` function provided by Skytable’s client. This is useful if you want to execute commands that don’t fit into the high-level Rust abstractions like `Get`, `Set`, `Del`.
+
+Here’s how you can modify the previous example to execute raw queries directly:
+
+### Example of Direct Queries:
+
+```rust
+use bb8::Pool;
+use bb8_skytable::SkytableConnectionManager;
+use skytable::actions::{Auth, Get};
+use skytable::resp::{RespCode, RespValue};
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Debug)]
+struct User {
+    id: u64,
+    username: String,
+    email: String,
+    age: u8,
+    active: bool,
+    height: f32,
+    scores: Vec<i32>,
+    metadata: Option<String>,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Set up Skytable connection pool with username and password
+    let username = "your_username";
+    let password = "your_password";
+    let manager = SkytableConnectionManager::new("127.0.0.1", 2003);
+
+    // Create a pool with authentication
+    let pool = Pool::builder().build(manager).await?;
+
+    // Authenticate with Skytable after acquiring a connection from the pool
+    let mut conn = pool.get().await?;
+    conn.auth(username, password).await?;
+
+    // Use normal Skytable commands directly as a query example
+
+    // Example: Inserting data using raw query (SET key value)
+    let key = "user:2";
+    let value = "Raw User Data";
+    let response: RespCode = conn.execute_raw(vec!["SET", key, value]).await?;
+    if response.is_ok() {
+        println!("Inserted data with key {}", key);
+    }
+
+    // Example: Retrieving data using raw query (GET key)
+    let get_response: Option<RespValue> = conn.execute_raw(vec!["GET", key]).await?;
+    if let Some(RespValue::String(value)) = get_response {
+        println!("Fetched raw data for key {}: {}", key, value);
+    } else {
+        println!("Key {} not found", key);
+    }
+
+    // Example: Deleting data using raw query (DEL key)
+    let del_response: RespCode = conn.execute_raw(vec!["DEL", key]).await?;
+    if del_response.is_ok() {
+        println!("Deleted data with key {}", key);
+    } else {
+        println!("Failed to delete data with key {}", key);
+    }
+
+    Ok(())
+}
+```
+
+### Explanation of Raw Queries:
+
+1. **`execute_raw`**: This method allows you to execute any Skytable command directly by sending the command as a vector of strings. This is analogous to sending raw SQL queries to a SQL database.
+   - **Inserting data**: `conn.execute_raw(vec!["SET", key, value])` sends a direct `SET` command to insert data with a specified key and value.
+   - **Retrieving data**: `conn.execute_raw(vec!["GET", key])` sends a `GET` command to retrieve the value associated with the key.
+   - **Deleting data**: `conn.execute_raw(vec!["DEL", key])` sends a `DEL` command to delete the key.
+
+2. **Command Structure**: 
+   - The first argument in `execute_raw` is always the command (`"SET"`, `"GET"`, `"DEL"`, etc.).
+   - The subsequent arguments depend on the command. For `SET`, it's `key` and `value`, for `GET`, it's just the `key`, and for `DEL`, it's the `key`.
+
+3. **Handling Responses**:
+   - `RespCode` is used to check if a command executed successfully (`.is_ok()`).
+   - `RespValue` can represent different response types like strings, integers, arrays, etc. For `GET`, the response is usually a `RespValue::String`.
+
+### Use Cases for Raw Queries:
+
+- **Direct Command Execution**: Sometimes, you may want to directly interact with Skytable using raw queries, for example, if you're executing custom commands that don't fit into the predefined Rust abstractions.
+  
+- **Batch Operations or Custom Queries**: Skytable provides commands like `SCAN`, `EXISTS`, or custom scripts, which can be executed via `execute_raw` to scan for keys, check if a key exists, or even perform batch operations.
+
+### Running the Example:
+
+1. Start Skytable with a username and password.
+2. Run the program:
+
+```bash
+cargo run
+```
+
+This example performs the following operations:
+- Inserts data with a direct `SET` command.
+- Fetches the data using a `GET` command.
+- Deletes the data using a `DEL` command.
+
+### Conclusion:
+
+Using `execute_raw`, you can directly send any Skytable command. This is analogous to sending raw SQL queries in SQL-based databases, allowing you to craft more complex or custom queries based on your needs. This is particularly useful when you want to bypass the higher-level abstractions for more control over the commands sent to the database.
