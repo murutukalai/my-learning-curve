@@ -1,0 +1,2 @@
+export ZED_ALLOW_EMULATED_GPU=1
+export DRI_PRIME=1
