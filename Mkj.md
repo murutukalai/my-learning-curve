@@ -113,3 +113,229 @@ fn main() {
 ```
 
 This code creates a simple layout similar to the attached image, replicating the basic structure, headers, invoice items, and summary. Adjust the spacing, colors, and styles as needed to get the exact design you want. This example uses `Mm` units for measurements and the Helvetica font. You may need to fine-tune the positioning to achieve a closer match to your image.
+
+
+________
+
+
+Here's an HTML version of the invoice layout in your image. This uses basic HTML and CSS to replicate the structure and styling as closely as possible. You can save this as an `.html` file and open it in a browser to view it.
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Invoice</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f4f4;
+        }
+        .container {
+            width: 80%;
+            margin: 20px auto;
+            background: #fff;
+            padding: 20px;
+            box-shadow: 0px 0px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            background: #422146;
+            padding: 20px;
+            color: white;
+            text-align: right;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 36px;
+        }
+        .invoice-info {
+            display: flex;
+            justify-content: space-between;
+            margin: 20px 0;
+        }
+        .invoice-info div {
+            font-size: 14px;
+        }
+        .invoice-info h2 {
+            font-size: 18px;
+            color: #422146;
+        }
+        .table {
+            width: 100%;
+            margin-top: 20px;
+            border-collapse: collapse;
+        }
+        .table th, .table td {
+            padding: 12px;
+            border: 1px solid #ddd;
+            text-align: left;
+        }
+        .table th {
+            background-color: #422146;
+            color: white;
+        }
+        .table td {
+            background-color: #fdf4fa;
+        }
+        .payment-info, .totals, .note {
+            margin-top: 20px;
+            font-size: 14px;
+        }
+        .totals {
+            float: right;
+            width: 200px;
+        }
+        .totals table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .totals th, .totals td {
+            padding: 8px;
+            border: 1px solid #ddd;
+            text-align: right;
+        }
+        .totals th {
+            background-color: #422146;
+            color: white;
+        }
+        .note {
+            margin-top: 50px;
+            font-size: 12px;
+            color: #555;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <!-- Header Section -->
+    <div class="header">
+        <h1>INVOICE</h1>
+        <p>Invoice Number: #202409001</p>
+        <p>Invoice Date: Apr 18, 2024</p>
+    </div>
+
+    <!-- Invoice and Recipient Info -->
+    <div class="invoice-info">
+        <div>
+            <h2>FROM:</h2>
+            <p>[Your Company Name]</p>
+            <p>[Your Company Address]</p>
+            <p>[Your City, Country]</p>
+        </div>
+        <div>
+            <h2>BILL TO:</h2>
+            <p>Jane Smith</p>
+            <p>janesmith@email.com</p>
+            <p>+91 - 1234567891</p>
+            <p>123/225, x floor, B city</p>
+            <p>Y Country - 532654</p>
+            <p>33GHTAA0000A1Z6</p>
+        </div>
+    </div>
+
+    <!-- Item Table -->
+    <table class="table">
+        <thead>
+            <tr>
+                <th>S.No</th>
+                <th>Title</th>
+                <th>Qty</th>
+                <th>Price</th>
+                <th>Total</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>01</td>
+                <td>Banner Design</td>
+                <td>01</td>
+                <td>00.00</td>
+                <td>00.00</td>
+            </tr>
+            <tr>
+                <td>02</td>
+                <td>Website designing</td>
+                <td>01</td>
+                <td>00.00</td>
+                <td>00.00</td>
+            </tr>
+            <tr>
+                <td>03</td>
+                <td>API Integration work</td>
+                <td>01</td>
+                <td>00.00</td>
+                <td>00.00</td>
+            </tr>
+            <tr>
+                <td>04</td>
+                <td>Website designing</td>
+                <td>01</td>
+                <td>00.00</td>
+                <td>00.00</td>
+            </tr>
+            <tr>
+                <td>05</td>
+                <td>Site Updated</td>
+                <td>01</td>
+                <td>00.00</td>
+                <td>00.00</td>
+            </tr>
+            <tr>
+                <td>06</td>
+                <td>Website designing</td>
+                <td>01</td>
+                <td>00.00</td>
+                <td>00.00</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <!-- Payment Info -->
+    <div class="payment-info">
+        <h2>PAYMENT INFO:</h2>
+        <p>A/C Name : Holder Name Here</p>
+        <p>A/C No : 11231546879</p>
+        <p>IFS Code : ICICI1231215</p>
+        <p>Pan No : Ghdng1234H</p>
+        <p>GST No : 22AAAAA0000A1Z5</p>
+    </div>
+
+    <!-- Totals Section -->
+    <div class="totals">
+        <table>
+            <tr>
+                <th>Subtotal</th>
+                <td>00.00</td>
+            </tr>
+            <tr>
+                <th>Tax</th>
+                <td>00.00</td>
+            </tr>
+            <tr>
+                <th>Roundoff</th>
+                <td>00.00</td>
+            </tr>
+            <tr>
+                <th>Grand Total</th>
+                <td>00.00</td>
+            </tr>
+        </table>
+    </div>
+
+    <!-- Note Section -->
+    <div class="note">
+        <p>NOTE:</p>
+        <p>We declare that the invoice shows the actual price of the goods described and that all particulars are true and correct.</p>
+        <p>*** CHEQUE Bounce Charges will be levied based on bank debits ***</p>
+    </div>
+</div>
+
+</body>
+</html>
+```
+
+This HTML document styles an invoice similar to your uploaded image. Adjust any details, such as company information and currency formatting, as needed. For a more polished design, you could add more advanced styling with CSS, or use a library like Bootstrap.
