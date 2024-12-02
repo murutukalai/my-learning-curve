@@ -53,6 +53,9 @@ to extrat user agent
 
 https://github.com/tokio-rs/axum/blob/main/axum/src/docs/extract.md
 
+ws 
+https://github.com/grooviegermanikus/websocket-tungstenite-retry
+
 ## fulstack repos
 https://github.com/dxps/fullstack-rust-axum-dioxus-rwa/tree/main
 </br>
