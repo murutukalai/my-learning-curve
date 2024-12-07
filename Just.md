@@ -52,3 +52,60 @@ just linux-task
 ```
 
 This approach ensures your `justfile` can adapt to different environments seamlessly.
+_________
+To modify the script so it checks if a specific Rust `cargo` target is added (e.g., for cross-compilation) and adds it if not, you can use the `cargo` command to list and add targets as needed. Here's the updated script:
+
+```sh
+#!/bin/bash
+
+# Define the target to check/add
+TARGET="x86_64-unknown-linux-gnu"
+
+# Function to check and add cargo target
+check_and_add_cargo_target() {
+    if cargo target list | grep -q "^$TARGET$"; then
+        echo "Cargo target '$TARGET' is already added."
+    else
+        echo "Cargo target '$TARGET' is not added. Adding it now..."
+        cargo target add "$TARGET"
+        if [[ $? -eq 0 ]]; then
+            echo "Cargo target '$TARGET' added successfully."
+        else
+            echo "Failed to add cargo target '$TARGET'."
+            exit 1
+        fi
+    fi
+}
+
+if [[ "$(uname)" == "Darwin" ]]; then
+    echo "Running on macOS"
+    check_and_add_cargo_target
+    # Insert macOS-specific commands here
+elif [[ "$(uname)" == "Linux" ]]; then
+    echo "Running on Linux"
+    check_and_add_cargo_target
+    # Insert Linux-specific commands here
+else
+    echo "Unsupported OS"
+    exit 1
+fi
+```
+
+### Explanation:
+1. **Define the Target**: Set the `TARGET` variable to the desired Rust target (e.g., `x86_64-unknown-linux-gnu`).
+2. **Check Existing Targets**: Use `cargo target list` to list all available targets and check if the desired target is already added with `grep`.
+3. **Add the Target**: If not already present, add the target using `cargo target add "$TARGET"`.
+4. **OS-Specific Commands**: Wrap the logic in a function and call it in the appropriate OS blocks (`Darwin` for macOS, `Linux` for Linux).
+
+### Save and Run:
+1. Save the script, e.g., `cargo-target-check.sh`.
+2. Make it executable:
+   ```sh
+   chmod +x cargo-target-check.sh
+   ```
+3. Run the script:
+   ```sh
+   ./cargo-target-check.sh
+   ``` 
+
+This ensures the target is checked and added if needed, regardless of the OS.
