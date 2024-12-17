@@ -139,3 +139,146 @@ async fn perform_work() {
 - You will see spans, timing details, and logs structured in the UI.
 
 This setup integrates Jaeger for tracing using the powerful `tracing` and OpenTelemetry ecosystem. You can now observe spans and logs in Jaeger for debugging and performance monitoring.
+_________
+To integrate **Jaeger tracing** into an **Axum server** using `tracing` and `OpenTelemetry`, you need to hook the tracing infrastructure into Axum's router and request handling. Here's a complete example:
+
+---
+
+### **Dependencies**
+
+Add the following to your `Cargo.toml`:
+
+```toml
+[dependencies]
+axum = "0.6"                       # Web framework
+tokio = { version = "1", features = ["full"] } # Async runtime
+tracing = "0.1"                    # Logging and spans
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-opentelemetry = "0.22"
+opentelemetry = { version = "0.22", features = ["rt-tokio"] }
+opentelemetry-jaeger = { version = "0.22", features = ["rt-tokio"] }
+```
+
+---
+
+### **Code Example**
+
+Here's how to integrate Jaeger tracing with an **Axum** server:
+
+```rust
+use axum::{routing::get, Router};
+use opentelemetry::global;
+use opentelemetry::sdk::propagation::TraceContextPropagator;
+use opentelemetry::sdk::trace::{self, Sampler};
+use opentelemetry::runtime::Tokio;
+use std::net::SocketAddr;
+use tracing::{info, Level};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::Registry;
+use tracing_opentelemetry::OpenTelemetryLayer;
+
+// Initialize OpenTelemetry with Jaeger backend
+fn init_tracer() -> opentelemetry::sdk::trace::Tracer {
+    opentelemetry_jaeger::new_pipeline()
+        .with_service_name("axum-jaeger-example")
+        .with_trace_config(trace::config().with_sampler(Sampler::AlwaysOn)) // Always sample for demo
+        .install_batch(Tokio)
+        .expect("Failed to initialize tracer")
+}
+
+// Axum handler function
+async fn root_handler() -> &'static str {
+    let span = tracing::span!(Level::INFO, "handler_span", work = "root_handler");
+    let _enter = span.enter();
+
+    info!("Handling request to /");
+    "Hello, World!"
+}
+
+#[tokio::main]
+async fn main() {
+    // Set up OpenTelemetry propagator
+    global::set_text_map_propagator(TraceContextPropagator::new());
+
+    // Initialize the OpenTelemetry tracer
+    let tracer = init_tracer();
+
+    // Set up tracing-subscriber with OpenTelemetry layer
+    let telemetry_layer = OpenTelemetryLayer::new(tracer);
+    let subscriber = Registry::default()
+        .with(tracing_subscriber::fmt::layer()) // Logs to stdout
+        .with(telemetry_layer);
+
+    tracing::subscriber::set_global_default(subscriber)
+        .expect("Failed to set tracing subscriber");
+
+    // Create Axum router
+    let app = Router::new()
+        .route("/", get(root_handler));
+
+    // Start Axum server
+    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    info!("Listening on http://{}", addr);
+    axum::Server::bind(&addr)
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
+
+    // Flush and shutdown the tracer
+    global::shutdown_tracer_provider();
+}
+```
+
+---
+
+### **Explanation**
+
+1. **Tracer Initialization**:
+   - `init_tracer()` sets up the Jaeger exporter for OpenTelemetry.
+   - The `Sampler::AlwaysOn` ensures all requests are traced.
+
+2. **`tracing-subscriber` Integration**:
+   - The `OpenTelemetryLayer` is added to the tracing subscriber to forward spans to Jaeger.
+
+3. **Axum Handler**:
+   - Tracing spans are created within the handler using `tracing::span!`.
+   - Logs and spans are automatically propagated and collected.
+
+4. **Server Initialization**:
+   - Axum binds the router to `127.0.0.1:3000`.
+
+5. **Shutdown**:
+   - `global::shutdown_tracer_provider()` ensures all traces are flushed before the server exits.
+
+---
+
+### **Run and Test**
+
+1. **Start Jaeger**:
+   ```bash
+   docker run -d --name jaeger \
+       -p 6831:6831/udp -p 16686:16686 \
+       jaegertracing/all-in-one:latest
+   ```
+
+2. **Run the Server**:
+   ```bash
+   cargo run
+   ```
+
+3. **Access the Endpoint**:
+   Open `http://127.0.0.1:3000` in your browser or use `curl`:
+   ```bash
+   curl http://127.0.0.1:3000
+   ```
+
+4. **View Traces**:
+   Go to the Jaeger UI at [http://localhost:16686](http://localhost:16686) and search for the service `axum-jaeger-example`. You'll see traces for each request.
+
+---
+
+### **Output**
+
+- Tracing spans will appear in the Jaeger UI, showing the span for each incoming HTTP request and any internal spans you’ve created (like `handler_span`).
+
+By integrating tracing with Axum, you gain observability for your web server, enabling performance monitoring, debugging, and distributed tracing across microservices.
